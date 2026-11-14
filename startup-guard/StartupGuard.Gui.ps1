@@ -179,6 +179,7 @@ namespace StartupGuard.UI
 $script:CaptureMode = -not [string]::IsNullOrWhiteSpace($CapturePrefix)
 $script:CaptureError = $false
 $script:SuppressToggle = $false
+$script:SuppressCheck = $false
 $script:Busy = $false
 $script:Status = $null
 
@@ -189,16 +190,16 @@ $script:UiText = [pscustomobject]@{
     Off           = '已关闭'
     OnDetail      = '已阻止 {0} 个程序自动启动 · 不影响手动打开'
     OnDetailDrift = '已阻止 {0} 项自启 · 另有 {1} 项又自动启动了，可点「重新应用」'
-    OffDetail     = '开机时会正常自动启动，手动打开不受影响'
+    OffDetail     = '开机时正常自动启动；勾选项在开关开启后生效，手动打开不受影响'
     Blocked       = '已阻止自启'
     Enabled       = '已启用'
     Disabled      = '已禁用'
-    Excluded      = '已排除'
+    Excluded      = '不拦截'
     Protected     = '系统项'
     Unknown       = '状态未知'
-    ListTitle     = '开机启动项'
-    CountOn       = '共 {0} 项 · 已阻止自启 {1} 项'
-    CountOff      = '共 {0} 项 · 当前启用 {1} 项'
+    ListTitle     = '开机启动项（勾选 = 开机时拦截）'
+    CountOn       = '共 {0} 项 · 已阻止 {1} 项'
+    CountOff      = '共 {0} 项 · 已选择 {1} 项'
     Refresh       = '刷新'
     Reapply       = '重新应用'
     Footer        = '只影响当前 Windows 用户的自动启动；关闭开关会恢复，程序始终可手动打开。'
@@ -220,12 +221,12 @@ function Get-GuardSourceLabel {
 }
 
 function Get-GuardDisplayState {
-    param([string]$DisplayState)
+    param([string]$DisplayState, [bool]$SwitchOn = $true)
     switch ($DisplayState) {
-        'Blocked'  { $script:UiText.Blocked }
-        'Enabled'  { $script:UiText.Enabled }
+        'Blocked'   { $script:UiText.Blocked }
+        'Enabled'   { $script:UiText.Enabled }
         'Disabled'  { $script:UiText.Disabled }
-        'Excluded'  { $script:UiText.Excluded }
+        'Excluded'  { if ($SwitchOn) { $script:UiText.Excluded } else { $script:UiText.Enabled } }
         'Protected' { $script:UiText.Protected }
         default     { $script:UiText.Unknown }
     }
@@ -249,7 +250,11 @@ function Update-GuardUi {
     $script:Toggle.Checked = ($status.Switch -eq 'On')
     $script:SuppressToggle = $false
 
-    if ($status.Switch -eq 'On') {
+    $switchOn = $status.Switch -eq 'On'
+    $selectedCount = @($status.Entries | Where-Object { -not $_.IsExcluded -and -not $_.Protected }).Count
+    $unselectedCount = @($status.Entries | Where-Object { $_.IsExcluded }).Count
+
+    if ($switchOn) {
         $script:StatusTitle.Text = $script:UiText.On
         $script:StatusTitle.ForeColor = [System.Drawing.Color]::FromArgb(0, 95, 184)
         if ($status.Drift.Count -gt 0) {
@@ -261,8 +266,9 @@ function Update-GuardUi {
             $script:StatusDetail.ForeColor = [System.Drawing.Color]::FromArgb(107, 114, 128)
         }
         $script:ReapplyButton.Enabled = ($status.Drift.Count -gt 0)
+        $unselectedSuffix = if ($unselectedCount -gt 0) { " · 未选 $unselectedCount 项" } else { '' }
         $protectedSuffix = if ($status.Counts.Protected -gt 0) { " · 系统项 $($status.Counts.Protected) 项" } else { '' }
-        $script:ListCount.Text = ($script:UiText.CountOn -f $status.Counts.Total, $status.Counts.Blocked) + $protectedSuffix
+        $script:ListCount.Text = ($script:UiText.CountOn -f $status.Counts.Total, $status.Counts.Blocked) + $unselectedSuffix + $protectedSuffix
     }
     else {
         $script:StatusTitle.Text = $script:UiText.Off
@@ -270,22 +276,28 @@ function Update-GuardUi {
         $script:StatusDetail.Text = $script:UiText.OffDetail
         $script:StatusDetail.ForeColor = [System.Drawing.Color]::FromArgb(107, 114, 128)
         $script:ReapplyButton.Enabled = $false
+        $unselectedSuffix = if ($unselectedCount -gt 0) { " · 未选 $unselectedCount 项" } else { '' }
         $protectedSuffix = if ($status.Counts.Protected -gt 0) { " · 系统项 $($status.Counts.Protected) 项" } else { '' }
-        $script:ListCount.Text = ($script:UiText.CountOff -f $status.Counts.Total, $status.Counts.Enabled) + $protectedSuffix
+        $script:ListCount.Text = ($script:UiText.CountOff -f $status.Counts.Total, $selectedCount) + $unselectedSuffix + $protectedSuffix
     }
 
     $order = @{ 'Blocked' = 0; 'Enabled' = 1; 'Disabled' = 2; 'Protected' = 3; 'Excluded' = 4; 'Unknown' = 5 }
     $sorted = @($status.Entries | Sort-Object @{ Expression = { $order[$_.DisplayState] } }, @{ Expression = { $_.Name } })
 
+    $script:SuppressCheck = $true
     $script:EntryList.BeginUpdate()
     try {
         $script:EntryList.Items.Clear()
         foreach ($entry in $sorted) {
-            $item = New-Object System.Windows.Forms.ListViewItem((Get-GuardDisplayState $entry.DisplayState))
-            [void]$item.SubItems.Add($entry.Name)
+            $displayText = Get-GuardDisplayState -DisplayState $entry.DisplayState -SwitchOn $switchOn
+            $colorState = if ($entry.DisplayState -eq 'Excluded' -and -not $switchOn) { 'Enabled' } else { $entry.DisplayState }
+            $item = New-Object System.Windows.Forms.ListViewItem($entry.Name)
             [void]$item.SubItems.Add((Get-GuardSourceLabel $entry.SourceId))
+            [void]$item.SubItems.Add($displayText)
             [void]$item.SubItems.Add($entry.Command)
-            switch ($entry.DisplayState) {
+            $item.Tag = $entry
+            $item.Checked = (-not $entry.Protected -and -not $entry.IsExcluded)
+            switch ($colorState) {
                 'Blocked'   { $item.ForeColor = [System.Drawing.Color]::FromArgb(16, 124, 16) }
                 'Enabled'   { $item.ForeColor = [System.Drawing.Color]::FromArgb(31, 35, 40) }
                 'Protected' { $item.ForeColor = [System.Drawing.Color]::FromArgb(70, 90, 120) }
@@ -295,6 +307,9 @@ function Update-GuardUi {
             $item.ToolTipText = if ($entry.Protected) {
                 "Windows 系统组件，默认不屏蔽" + [Environment]::NewLine + $entry.Command
             }
+            elseif ($entry.IsExcluded) {
+                "未勾选：开关开启时不会拦截该项" + [Environment]::NewLine + $entry.Command
+            }
             else {
                 $entry.Command
             }
@@ -303,6 +318,15 @@ function Update-GuardUi {
     }
     finally {
         $script:EntryList.EndUpdate()
+        # Programmatic Checked changes can raise ItemChecked after the current
+        # message is processed.  Keep the guard up until those queued events
+        # have been drained so populating the list never triggers a refresh.
+        try {
+            [void]$script:EntryList.BeginInvoke([System.Action] { $script:SuppressCheck = $false })
+        }
+        catch {
+            $script:SuppressCheck = $false
+        }
     }
 
     if ($script:Status.IsSandbox) {
@@ -442,13 +466,14 @@ $script:EntryList.BorderStyle = 'None'
 $script:EntryList.BackColor = [System.Drawing.Color]::White
 $script:EntryList.ForeColor = [System.Drawing.Color]::FromArgb(31, 35, 40)
 $script:EntryList.ShowItemToolTips = $true
+$script:EntryList.CheckBoxes = $true
 $script:EntryList.Location = New-Object System.Drawing.Point(22, 48)
 $script:EntryList.Size = New-Object System.Drawing.Size(768, 272)
 $script:EntryList.Anchor = 'Top,Bottom,Left,Right'
-[void]$script:EntryList.Columns.Add('状态', 82)
-[void]$script:EntryList.Columns.Add('名称', 190)
-[void]$script:EntryList.Columns.Add('位置', 170)
-[void]$script:EntryList.Columns.Add('启动命令', 320)
+[void]$script:EntryList.Columns.Add('名称', 220)
+[void]$script:EntryList.Columns.Add('位置', 160)
+[void]$script:EntryList.Columns.Add('状态', 100)
+[void]$script:EntryList.Columns.Add('启动命令', 280)
 $listCard.Controls.Add($script:EntryList)
 
 $script:FooterLabel = New-Object System.Windows.Forms.Label
@@ -468,13 +493,84 @@ $script:Toggle.Add_CheckedChanged({
 $script:RefreshButton.Add_Click({ Update-GuardUi })
 $script:ReapplyButton.Add_Click({ Invoke-GuardSwitchChange -Enable $true })
 
-try {
-    Update-GuardUi
-}
-catch {
-    Show-GuardMessage -Title $script:UiText.ErrorTitle -Text $_.Exception.Message
-    $script:Toggle.Enabled = $false
-}
+$script:EntryList.Add_ItemChecked({
+        param($sender, $e)
+
+        if ($script:SuppressCheck -or $script:Busy) { return }
+        $item = $e.Item
+        if ($null -eq $item -or $null -eq $item.Tag) { return }
+        $entry = $item.Tag
+        $expectedChecked = (-not $entry.Protected -and -not $entry.IsExcluded)
+        if ([bool]$item.Checked -eq $expectedChecked) {
+            # Programmatic Checked changes echo the current selection; ignore
+            # them so only a real user toggle reaches the engine.
+            return
+        }
+        if ($entry.Protected) {
+            $script:SuppressCheck = $true
+            try { $item.Checked = $false } finally { $script:SuppressCheck = $false }
+            return
+        }
+
+        $patterns = @($script:Status.Excluded)
+        $exact = [System.Management.Automation.WildcardPattern]::Escape($entry.Name)
+        if ($item.Checked) {
+            $otherPattern = $patterns | Where-Object { $_ -ne $exact -and $_ -ne $entry.Name -and $entry.Name -like $_ } | Select-Object -First 1
+            if ($null -ne $otherPattern) {
+                $script:SuppressCheck = $true
+                try { $item.Checked = $false } finally { $script:SuppressCheck = $false }
+                Show-GuardMessage -Title '排除规则' -Text ("此项被排除规则「{0}」跳过；请先在命令行修改该规则。" -f $otherPattern)
+                return
+            }
+            $newPatterns = @($patterns | Where-Object { $_ -ne $exact -and $_ -ne $entry.Name })
+        }
+        else {
+            $newPatterns = @($patterns)
+            if (@($newPatterns | Where-Object { $_ -eq $exact -or $_ -eq $entry.Name }).Count -eq 0) {
+                $newPatterns += $exact
+            }
+        }
+
+        $script:Busy = $true
+        $script:Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $script:PendingExclusions = @($newPatterns)
+        # Apply after the ItemChecked event returns; rebuilding the list from
+        # inside the event can re-enter the checkbox notification and hang.
+        try {
+            [void]$script:Form.BeginInvoke([System.Action] {
+                try {
+                    $result = Set-StartupGuardExclusions -Exclude $script:PendingExclusions -SandboxRoot $SandboxRoot -StatePath $StatePath
+                    if ($null -ne $result -and $null -ne $result.PSObject.Properties['Failed'] -and @($result.Failed).Count -gt 0) {
+                        Show-GuardMessage -Title $script:UiText.PartialTitle -Text (@($result.Failed) -join [Environment]::NewLine)
+                    }
+                }
+                catch {
+                    Show-GuardMessage -Title $script:UiText.ErrorTitle -Text $_.Exception.Message
+                }
+                finally {
+                    $script:Busy = $false
+                    $script:Form.Cursor = [System.Windows.Forms.Cursors]::Default
+                    try { Update-GuardUi } catch { Show-GuardMessage -Title $script:UiText.ErrorTitle -Text $_.Exception.Message }
+                }
+            })
+        }
+        catch {
+            $script:Busy = $false
+            $script:Form.Cursor = [System.Windows.Forms.Cursors]::Default
+            Show-GuardMessage -Title $script:UiText.ErrorTitle -Text $_.Exception.Message
+        }
+    })
+
+$script:Form.Add_Shown({
+        try {
+            Update-GuardUi
+            [void]$script:Toggle.Focus()
+        }
+        catch {
+            Show-GuardMessage -Title $script:UiText.ErrorTitle -Text $_.Exception.Message
+            $script:Toggle.Enabled = $false
+        }
+    })
 
 if ($script:CaptureMode) {
     if ([string]::IsNullOrWhiteSpace($SandboxRoot)) {
@@ -497,6 +593,47 @@ if ($script:CaptureMode) {
     $script:Form.Refresh()
     [System.Windows.Forms.Application]::DoEvents()
     [StartupGuard.UI.WindowCapture]::Save($script:Form, "$CapturePrefix-on.png")
+
+    # Test-only: exercise the real checkbox event path once in the sandbox and
+    # verify the selection is applied, then restore it before shutting down.
+    $probeItem = $script:EntryList.Items | Where-Object { $null -ne $_.Tag -and -not $_.Tag.Protected } | Select-Object -First 1
+    if ($null -ne $probeItem) {
+        $probeName = $probeItem.Tag.Name
+        $wasChecked = [bool]$probeItem.Checked
+        $probeItem.Checked = -not $wasChecked
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 600
+        $probeStatus = Get-StartupGuardStatus -SandboxRoot $SandboxRoot -StatePath $StatePath
+        $probeAfter = $probeStatus.Entries | Where-Object { $_.Name -eq $probeName } | Select-Object -First 1
+        if ($null -eq $probeAfter -or ([bool]$probeAfter.IsExcluded -ne $wasChecked)) {
+            $script:CaptureError = $true
+            [Console]::Error.WriteLine("Checkbox uncheck self-test failed for $probeName")
+        }
+
+        # Wait for the deferred population guard to clear, then check the same
+        # row again through the event path and verify the exclusion is removed.
+        $deadline = (Get-Date).AddSeconds(3)
+        while ($script:SuppressCheck -and (Get-Date) -lt $deadline) {
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 50
+        }
+        $probeAgain = $script:EntryList.Items | Where-Object { $null -ne $_.Tag -and $_.Tag.Name -eq $probeName } | Select-Object -First 1
+        if ($null -ne $probeAgain) {
+            $probeAgain.Checked = $wasChecked
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 600
+            $probeStatus2 = Get-StartupGuardStatus -SandboxRoot $SandboxRoot -StatePath $StatePath
+            $probeAfter2 = $probeStatus2.Entries | Where-Object { $_.Name -eq $probeName } | Select-Object -First 1
+            if ($null -eq $probeAfter2 -or ([bool]$probeAfter2.IsExcluded -eq $wasChecked)) {
+                $script:CaptureError = $true
+                [Console]::Error.WriteLine("Checkbox recheck self-test failed for $probeName (suppress=$($script:SuppressCheck))")
+            }
+        }
+
+        # Restore the demo selection directly; the event path above is what
+        # this capture self-test verifies.
+        Set-StartupGuardExclusions -Exclude @('GameLauncher', 'MusicBox') -SandboxRoot $SandboxRoot -StatePath $StatePath | Out-Null
+    }
 
     $script:Toggle.Checked = $false
     [System.Windows.Forms.Application]::DoEvents()

@@ -500,6 +500,7 @@ function Get-StartupGuardStatus {
         $key = Get-StartupGuardKey -Name $entry.Name -Variant $entry.Variant
         $isRecorded = $recorded.ContainsKey($key)
         $isProtected = [bool]$entry.Protected
+        $isExcluded = Test-StartupGuardExcluded -Name $entry.Name -Patterns $state.Excluded
         if ($isProtected -and $entry.ApprovalState -eq 'Disabled' -and $isRecorded) {
             $systemBlocked.Add($entry.Name)
         }
@@ -513,7 +514,7 @@ function Get-StartupGuardStatus {
                 }
                 'Unknown' { 'Unknown' }
                 default {
-                    if (Test-StartupGuardExcluded -Name $entry.Name -Patterns $state.Excluded) { 'Excluded' } else { 'Enabled' }
+                    if ($isExcluded) { 'Excluded' } else { 'Enabled' }
                 }
             }
         }
@@ -527,6 +528,7 @@ function Get-StartupGuardStatus {
             DisplayState  = $displayState
             IsRecorded    = $isRecorded
             Protected     = $isProtected
+            IsExcluded    = $isExcluded
         })
     }
 
@@ -783,9 +785,39 @@ function Set-StartupGuardSwitch {
     return $result
 }
 
+function Set-StartupGuardExclusions {
+    <#
+        Replaces the user's exclusion/selection list without changing the
+        master switch state. If the switch is on, the change is applied
+        immediately: new selections are blocked and newly excluded entries are
+        released. If the switch is off, the selection is only remembered.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$Exclude,
+        [string]$SandboxRoot = '',
+        [string]$StatePath = ''
+    )
+
+    $paths = Get-StartupGuardPaths -SandboxRoot $SandboxRoot
+    $state = Get-StartupGuardState -StatePath $StatePath -DefaultPath $paths.StatePath
+    $excluded = @($Exclude | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+    $state.Excluded = $excluded
+    $state.UpdatedAt = (Get-Date).ToString('o')
+    Save-StartupGuardState -State $state
+
+    if ($state.Switch -eq 'On') {
+        return Set-StartupGuardSwitch -State On -Exclude $excluded -SandboxRoot $SandboxRoot -StatePath $StatePath
+    }
+    return Get-StartupGuardStatus -SandboxRoot $SandboxRoot -StatePath $StatePath
+}
+
 Export-ModuleMember -Function @(
     'Get-StartupGuardPaths'
     'Get-StartupGuardEntry'
     'Get-StartupGuardStatus'
     'Set-StartupGuardSwitch'
+    'Set-StartupGuardExclusions'
 )

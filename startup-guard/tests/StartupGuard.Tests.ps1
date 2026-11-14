@@ -378,6 +378,49 @@ try {
         }
     }
 
+    Invoke-Test 'per-entry selection is remembered while the switch is off' {
+        Add-TestRunValue -SourceId 'UserRun' -Name 'AppA' -Command 'C:\A\a.exe'
+        Add-TestRunValue -SourceId 'UserRun' -Name 'AppB' -Command 'C:\B\b.exe'
+
+        $selection = Set-StartupGuardExclusions -Exclude @('AppA') -SandboxRoot $script:Sandbox -StatePath $script:StatePath
+        Assert-Equal 'Off' $selection.Switch
+        Assert-True ($null -eq (Get-TestApproval -Name 'AppA' -Variant 'Run')) 'Selecting while off wrote an overlay.'
+
+        $status = Get-Status
+        $entryA = $status.Entries | Where-Object { $_.Name -eq 'AppA' } | Select-Object -First 1
+        Assert-Equal 'Excluded' $entryA.DisplayState
+        Assert-Equal 1 $status.Counts.Excluded
+        $state = Get-Content -LiteralPath $script:StatePath -Raw | ConvertFrom-Json
+        Assert-Equal 'AppA' (@($state.excluded) -join ',')
+
+        Set-StartupGuardSwitch -State On -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+        Assert-True ($null -eq (Get-TestApproval -Name 'AppA' -Variant 'Run')) 'The remembered selection was not respected.'
+        Assert-ApprovalByte -Name 'AppB' -Variant 'Run' -Expected 3
+        Set-StartupGuardSwitch -State Off -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+    }
+
+    Invoke-Test 'toggling the selection while the switch is on applies immediately' {
+        Add-TestRunValue -SourceId 'UserRun' -Name 'AppA' -Command 'C:\A\a.exe'
+        Add-TestRunValue -SourceId 'UserRun' -Name 'AppB' -Command 'C:\B\b.exe'
+        Set-StartupGuardSwitch -State On -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+        Assert-ApprovalByte -Name 'AppA' -Variant 'Run' -Expected 3
+        Assert-ApprovalByte -Name 'AppB' -Variant 'Run' -Expected 3
+
+        $release = Set-StartupGuardExclusions -Exclude @('AppA') -SandboxRoot $script:Sandbox -StatePath $script:StatePath
+        Assert-Equal 'On' $release.Switch
+        Assert-True ($null -eq (Get-TestApproval -Name 'AppA' -Variant 'Run')) 'Unchecking did not release the entry.'
+        Assert-ApprovalByte -Name 'AppB' -Variant 'Run' -Expected 3
+        $status = Get-Status
+        Assert-Equal 1 $status.Counts.Blocked
+        Assert-Equal 1 $status.Counts.Excluded
+
+        Set-StartupGuardExclusions -Exclude @() -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+        Assert-ApprovalByte -Name 'AppA' -Variant 'Run' -Expected 3
+        Assert-ApprovalByte -Name 'AppB' -Variant 'Run' -Expected 3
+        Assert-Equal 0 (Get-Status).Counts.Excluded
+        Set-StartupGuardSwitch -State Off -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+    }
+
     Invoke-Test 'Windows system entries are protected from blocking' {
         Add-TestRunValue -SourceId 'MachineRun' -Name 'SecurityHealth' -Command '%windir%\system32\SecurityHealthSystray.exe'
         Add-TestRunValue -SourceId 'UserRun' -Name 'PowerWatch' -Command '%windir%\system32\wscript.exe "E:\PowerWatch\start.vbs" logon'
