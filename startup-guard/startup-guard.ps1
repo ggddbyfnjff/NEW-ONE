@@ -48,8 +48,8 @@ function Write-GuardStatusText {
     if (-not $EntriesOnly) {
         Write-Output ('Startup Guard switch : {0}' -f $Status.Switch.ToUpperInvariant())
         Write-Output ('Blocked by guard     : {0}' -f $Status.Counts.Blocked)
-        Write-Output ('Startup entries      : {0} total | {1} enabled | {2} disabled | {3} excluded | {4} unknown' -f `
-            $Status.Counts.Total, $Status.Counts.Enabled, $Status.Counts.Disabled, $Status.Counts.Excluded, $Status.Counts.Unknown)
+        Write-Output ('Startup entries      : {0} total | {1} enabled | {2} disabled | {3} excluded | {4} protected | {5} unknown' -f `
+            $Status.Counts.Total, $Status.Counts.Enabled, $Status.Counts.Disabled, $Status.Counts.Excluded, $Status.Counts.Protected, $Status.Counts.Unknown)
         if ($Status.Drift.Count -gt 0) {
             Write-Output ('Not blocked          : {0} ({1}) - run "on" to re-apply' -f $Status.Drift.Count, ($Status.Drift -join ', '))
         }
@@ -86,13 +86,14 @@ function Write-GuardResultText {
     foreach ($entryName in @($Result.Reapplied)) { Write-Output ('  re-applied     {0}' -f $entryName) }
     foreach ($entryName in @($Result.Restored)) { Write-Output ('  restored       {0}' -f $entryName) }
     foreach ($entryName in @($Result.ExclusionsRestored)) { Write-Output ('  released       {0} (excluded)' -f $entryName) }
+    foreach ($entryName in @($Result.ProtectedReleased)) { Write-Output ('  released       {0} (system)' -f $entryName) }
     foreach ($entryName in @($Result.Skipped)) { Write-Output ('  skipped        {0} (unknown state)' -f $entryName) }
     foreach ($failure in @($Result.Failed)) { Write-Output ('  FAILED         {0}' -f $failure) }
     foreach ($warning in @($Result.Warnings)) { Write-Output ('  warning        {0}' -f $warning) }
 
     if ($null -ne $Result.Counts) {
-        Write-Output ('Entries: {0} total | {1} blocked | {2} enabled | {3} excluded' -f `
-            $Result.Counts.Total, $Result.Counts.Blocked, $Result.Counts.Enabled, $Result.Counts.Excluded)
+        Write-Output ('Entries: {0} total | {1} blocked | {2} enabled | {3} excluded | {4} protected' -f `
+            $Result.Counts.Total, $Result.Counts.Blocked, $Result.Counts.Enabled, $Result.Counts.Excluded, $Result.Counts.Protected)
     }
 }
 

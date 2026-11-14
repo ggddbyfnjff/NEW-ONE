@@ -194,6 +194,7 @@ $script:UiText = [pscustomobject]@{
     Enabled       = '已启用'
     Disabled      = '已禁用'
     Excluded      = '已排除'
+    Protected     = '系统项'
     Unknown       = '状态未知'
     ListTitle     = '开机启动项'
     CountOn       = '共 {0} 项 · 已屏蔽 {1} 项'
@@ -223,9 +224,10 @@ function Get-GuardDisplayState {
     switch ($DisplayState) {
         'Blocked'  { $script:UiText.Blocked }
         'Enabled'  { $script:UiText.Enabled }
-        'Disabled' { $script:UiText.Disabled }
-        'Excluded' { $script:UiText.Excluded }
-        default    { $script:UiText.Unknown }
+        'Disabled'  { $script:UiText.Disabled }
+        'Excluded'  { $script:UiText.Excluded }
+        'Protected' { $script:UiText.Protected }
+        default     { $script:UiText.Unknown }
     }
 }
 
@@ -259,7 +261,8 @@ function Update-GuardUi {
             $script:StatusDetail.ForeColor = [System.Drawing.Color]::FromArgb(107, 114, 128)
         }
         $script:ReapplyButton.Enabled = ($status.Drift.Count -gt 0)
-        $script:ListCount.Text = ($script:UiText.CountOn -f $status.Counts.Total, $status.Counts.Blocked)
+        $protectedSuffix = if ($status.Counts.Protected -gt 0) { " · 系统项 $($status.Counts.Protected) 项" } else { '' }
+        $script:ListCount.Text = ($script:UiText.CountOn -f $status.Counts.Total, $status.Counts.Blocked) + $protectedSuffix
     }
     else {
         $script:StatusTitle.Text = $script:UiText.Off
@@ -267,10 +270,11 @@ function Update-GuardUi {
         $script:StatusDetail.Text = $script:UiText.OffDetail
         $script:StatusDetail.ForeColor = [System.Drawing.Color]::FromArgb(107, 114, 128)
         $script:ReapplyButton.Enabled = $false
-        $script:ListCount.Text = ($script:UiText.CountOff -f $status.Counts.Total, $status.Counts.Enabled)
+        $protectedSuffix = if ($status.Counts.Protected -gt 0) { " · 系统项 $($status.Counts.Protected) 项" } else { '' }
+        $script:ListCount.Text = ($script:UiText.CountOff -f $status.Counts.Total, $status.Counts.Enabled) + $protectedSuffix
     }
 
-    $order = @{ 'Blocked' = 0; 'Enabled' = 1; 'Disabled' = 2; 'Excluded' = 3; 'Unknown' = 4 }
+    $order = @{ 'Blocked' = 0; 'Enabled' = 1; 'Disabled' = 2; 'Protected' = 3; 'Excluded' = 4; 'Unknown' = 5 }
     $sorted = @($status.Entries | Sort-Object @{ Expression = { $order[$_.DisplayState] } }, @{ Expression = { $_.Name } })
 
     $script:EntryList.BeginUpdate()
@@ -282,12 +286,18 @@ function Update-GuardUi {
             [void]$item.SubItems.Add((Get-GuardSourceLabel $entry.SourceId))
             [void]$item.SubItems.Add($entry.Command)
             switch ($entry.DisplayState) {
-                'Blocked'  { $item.ForeColor = [System.Drawing.Color]::FromArgb(16, 124, 16) }
-                'Enabled'  { $item.ForeColor = [System.Drawing.Color]::FromArgb(31, 35, 40) }
-                'Unknown'  { $item.ForeColor = [System.Drawing.Color]::FromArgb(181, 71, 8) }
-                default    { $item.ForeColor = [System.Drawing.Color]::FromArgb(107, 114, 128) }
+                'Blocked'   { $item.ForeColor = [System.Drawing.Color]::FromArgb(16, 124, 16) }
+                'Enabled'   { $item.ForeColor = [System.Drawing.Color]::FromArgb(31, 35, 40) }
+                'Protected' { $item.ForeColor = [System.Drawing.Color]::FromArgb(70, 90, 120) }
+                'Unknown'   { $item.ForeColor = [System.Drawing.Color]::FromArgb(181, 71, 8) }
+                default     { $item.ForeColor = [System.Drawing.Color]::FromArgb(107, 114, 128) }
             }
-            $item.ToolTipText = $entry.Command
+            $item.ToolTipText = if ($entry.Protected) {
+                "Windows 系统组件，默认不屏蔽" + [Environment]::NewLine + $entry.Command
+            }
+            else {
+                $entry.Command
+            }
             [void]$script:EntryList.Items.Add($item)
         }
     }

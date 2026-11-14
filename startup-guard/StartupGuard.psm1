@@ -99,6 +99,64 @@ function Get-StartupGuardKey {
     return ('{0}|{1}' -f $Variant, $Name).ToLowerInvariant()
 }
 
+function Get-StartupGuardCommandPath {
+    param([string]$Command)
+
+    if ([string]::IsNullOrWhiteSpace($Command)) { return $null }
+    $expanded = [Environment]::ExpandEnvironmentVariables($Command).Trim()
+
+    if ($expanded.StartsWith('"')) {
+        $closingQuote = $expanded.IndexOf('"', 1)
+        if ($closingQuote -gt 1) { return $expanded.Substring(1, $closingQuote - 1).Trim() }
+    }
+
+    $match = [regex]::Match($expanded, '^(.+?\.(exe|com|bat|cmd|vbs|ps1|dll))(\s|$)', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($match.Success) { return $match.Groups[1].Value.Trim('"') }
+    return ($expanded.Split([char[]]@(' ', "`t"), 2)[0]).Trim('"')
+}
+
+function Test-StartupGuardSystemEntry {
+    param([string]$Name, [string]$Command)
+
+    # Windows Security and Defender are never treated as removable startup apps.
+    if (-not [string]::IsNullOrWhiteSpace($Name) -and $Name -match '^(SecurityHealth|Windows ?Defender|Windows Security)') {
+        return $true
+    }
+
+    $path = Get-StartupGuardCommandPath -Command $Command
+    if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+
+    # wscript/cscript and shell hosts launch a user script, not a system component.
+    $leaf = [System.IO.Path]::GetFileName($path)
+    if (@('wscript.exe', 'cscript.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe') -contains $leaf.ToLowerInvariant()) {
+        return $false
+    }
+
+    $systemRoot = $env:SystemRoot
+    if ([string]::IsNullOrWhiteSpace($systemRoot)) { $systemRoot = 'C:\Windows' }
+    $fullPath = $path
+    try {
+        if (-not [System.IO.Path]::IsPathRooted($fullPath)) {
+            $fullPath = [System.IO.Path]::GetFullPath($fullPath)
+        }
+    }
+    catch { return $false }
+
+    if ($fullPath.StartsWith(($systemRoot.TrimEnd('\') + '\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    $programFiles = $env:ProgramFiles
+    if (-not [string]::IsNullOrWhiteSpace($programFiles)) {
+        $defenderPrefix = $programFiles.TrimEnd('\') + '\Windows Defender\'
+        if ($fullPath.StartsWith($defenderPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Test-StartupGuardExcluded {
     param([string]$Name, [string[]]$Patterns)
     foreach ($pattern in @($Patterns)) {
@@ -210,6 +268,7 @@ function Get-StartupGuardEntryInternal {
                     ApprovalState  = $approval.State
                     HasApproval    = [bool]$approval.Exists
                     PreviousBytes  = $bytesBase64
+                    Protected      = (Test-StartupGuardSystemEntry -Name $valueName -Command ([string]$value))
                 })
             }
         }
@@ -253,6 +312,7 @@ function Get-StartupGuardEntryInternal {
                     ApprovalState  = $approval.State
                     HasApproval    = [bool]$approval.Exists
                     PreviousBytes  = $bytesBase64
+                    Protected      = (Test-StartupGuardSystemEntry -Name $file.Name -Command $command)
                 })
             }
         }
@@ -417,7 +477,8 @@ function Set-StartupGuardBlocked {
 function Get-StartupGuardStatus {
     <#
         Returns the current switch state plus every startup entry and how the
-        guard sees it: Blocked, Disabled, Excluded, Enabled or Unknown.
+        guard sees it: Blocked, Disabled, Excluded, Protected, Enabled or
+        Unknown.
     #>
     [CmdletBinding()]
     param(
@@ -434,16 +495,26 @@ function Get-StartupGuardStatus {
     }
 
     $entries = New-Object System.Collections.Generic.List[object]
+    $systemBlocked = New-Object System.Collections.Generic.List[string]
     foreach ($entry in @(Get-StartupGuardEntryInternal -Paths $paths)) {
         $key = Get-StartupGuardKey -Name $entry.Name -Variant $entry.Variant
         $isRecorded = $recorded.ContainsKey($key)
-        $displayState = switch ($entry.ApprovalState) {
-            'Disabled' {
-                if ($isRecorded) { 'Blocked' } else { 'Disabled' }
-            }
-            'Unknown' { 'Unknown' }
-            default {
-                if (Test-StartupGuardExcluded -Name $entry.Name -Patterns $state.Excluded) { 'Excluded' } else { 'Enabled' }
+        $isProtected = [bool]$entry.Protected
+        if ($isProtected -and $entry.ApprovalState -eq 'Disabled' -and $isRecorded) {
+            $systemBlocked.Add($entry.Name)
+        }
+        $displayState = if ($isProtected) {
+            'Protected'
+        }
+        else {
+            switch ($entry.ApprovalState) {
+                'Disabled' {
+                    if ($isRecorded) { 'Blocked' } else { 'Disabled' }
+                }
+                'Unknown' { 'Unknown' }
+                default {
+                    if (Test-StartupGuardExcluded -Name $entry.Name -Patterns $state.Excluded) { 'Excluded' } else { 'Enabled' }
+                }
             }
         }
         $entries.Add([pscustomobject]@{
@@ -455,6 +526,7 @@ function Get-StartupGuardStatus {
             ApprovalState = $entry.ApprovalState
             DisplayState  = $displayState
             IsRecorded    = $isRecorded
+            Protected     = $isProtected
         })
     }
 
@@ -465,6 +537,7 @@ function Get-StartupGuardStatus {
         Enabled  = @($entryArray | Where-Object { $_.DisplayState -eq 'Enabled' }).Count
         Disabled = @($entryArray | Where-Object { $_.DisplayState -eq 'Disabled' }).Count
         Excluded = @($entryArray | Where-Object { $_.DisplayState -eq 'Excluded' }).Count
+        Protected = @($entryArray | Where-Object { $_.DisplayState -eq 'Protected' }).Count
         Unknown  = @($entryArray | Where-Object { $_.DisplayState -eq 'Unknown' }).Count
     }
 
@@ -479,6 +552,9 @@ function Get-StartupGuardStatus {
     }
     if ($state.Switch -eq 'Off' -and @($state.Disabled).Count -gt 0) {
         $warnings.Add("The state file is off but still records $(@($state.Disabled).Count) blocked entr$(if (@($state.Disabled).Count -eq 1) { 'y' } else { 'ies' }). Run off again to restore them.")
+    }
+    foreach ($name in $systemBlocked) {
+        $warnings.Add("System entry '$name' is still disabled by an older record; run on or off to release it.")
     }
 
     return [pscustomobject]@{
@@ -527,6 +603,7 @@ function Set-StartupGuardSwitch {
         Reapplied          = @()
         Restored           = @()
         ExclusionsRestored = @()
+        ProtectedReleased  = @()
         Failed             = @()
         Warnings           = @()
         Skipped            = @()
@@ -534,32 +611,53 @@ function Set-StartupGuardSwitch {
     }
 
     if ($State -eq 'On') {
-        # An exclusion always wins: release entries that were blocked earlier
-        # but now match the exclusion list before planning new blocks.
+        $entryList = @(Get-StartupGuardEntryInternal -Paths $paths)
+        $entryByKey = @{}
+        foreach ($entry in $entryList) {
+            $entryByKey[(Get-StartupGuardKey -Name $entry.Name -Variant $entry.Variant)] = $entry
+        }
+
+        # Exclusions and built-in system protection always win: release any
+        # entries blocked by an older version or by a previous exclusion list.
         $remaining = New-Object System.Collections.Generic.List[object]
         foreach ($record in @($guardState.Disabled)) {
+            $recordKey = Get-StartupGuardKey -Name $record.Name -Variant $record.Variant
+            $releaseReason = $null
             if (Test-StartupGuardExcluded -Name $record.Name -Patterns $excluded) {
-                if ($DryRun) {
-                    $result.ExclusionsRestored += $record.Name
-                    $remaining.Add($record)
-                    continue
+                $releaseReason = 'excluded'
+            }
+            elseif ($entryByKey.ContainsKey($recordKey) -and $entryByKey[$recordKey].Protected) {
+                $releaseReason = 'system'
+            }
+            elseif (-not $entryByKey.ContainsKey($recordKey) -and (Test-StartupGuardSystemEntry -Name $record.Name -Command '')) {
+                $releaseReason = 'system'
+            }
+
+            if ($null -eq $releaseReason) {
+                $remaining.Add($record)
+                continue
+            }
+
+            if ($DryRun) {
+                if ($releaseReason -eq 'system') { $result.ProtectedReleased += $record.Name }
+                else { $result.ExclusionsRestored += $record.Name }
+                $remaining.Add($record)
+                continue
+            }
+
+            try {
+                if (Restore-StartupGuardRecord -Paths $paths -Record $record) {
+                    if ($releaseReason -eq 'system') { $result.ProtectedReleased += $record.Name }
+                    else { $result.ExclusionsRestored += $record.Name }
                 }
-                try {
-                    if (Restore-StartupGuardRecord -Paths $paths -Record $record) {
-                        $result.ExclusionsRestored += $record.Name
-                    }
-                    else {
-                        $remaining.Add($record)
-                        $result.Failed += "Could not release excluded entry '$($record.Name)'."
-                    }
-                }
-                catch {
+                else {
                     $remaining.Add($record)
-                    $result.Failed += "Could not release excluded entry '$($record.Name)': $($_.Exception.Message)"
+                    $result.Failed += "Could not release $(if ($releaseReason -eq 'system') { 'system' } else { 'excluded' }) entry '$($record.Name)'."
                 }
             }
-            else {
+            catch {
                 $remaining.Add($record)
+                $result.Failed += "Could not release $(if ($releaseReason -eq 'system') { 'system' } else { 'excluded' }) entry '$($record.Name)': $($_.Exception.Message)"
             }
         }
         if (-not $DryRun) { $guardState.Disabled = $remaining.ToArray() }
@@ -570,7 +668,8 @@ function Set-StartupGuardSwitch {
         }
 
         $planned = @{}
-        foreach ($entry in @(Get-StartupGuardEntryInternal -Paths $paths)) {
+        foreach ($entry in $entryList) {
+            if ($entry.Protected) { continue }
             if (Test-StartupGuardExcluded -Name $entry.Name -Patterns $excluded) { continue }
 
             $key = Get-StartupGuardKey -Name $entry.Name -Variant $entry.Variant

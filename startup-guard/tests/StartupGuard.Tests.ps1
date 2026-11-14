@@ -378,6 +378,54 @@ try {
         }
     }
 
+    Invoke-Test 'Windows system entries are protected from blocking' {
+        Add-TestRunValue -SourceId 'MachineRun' -Name 'SecurityHealth' -Command '%windir%\system32\SecurityHealthSystray.exe'
+        Add-TestRunValue -SourceId 'UserRun' -Name 'PowerWatch' -Command '%windir%\system32\wscript.exe "E:\PowerWatch\start.vbs" logon'
+
+        $on = Set-StartupGuardSwitch -State On -SandboxRoot $script:Sandbox -StatePath $script:StatePath
+        Assert-True (@($on.Blocked) -notcontains 'SecurityHealth') 'SecurityHealth was blocked.'
+        Assert-True (@($on.Blocked) -contains 'PowerWatch') 'A user script launcher was treated as a system entry.'
+        Assert-True ($null -eq (Get-TestApproval -Name 'SecurityHealth' -Variant 'Run')) 'SecurityHealth received an overlay.'
+        Assert-ApprovalByte -Name 'PowerWatch' -Variant 'Run' -Expected 3
+
+        $status = Get-Status
+        $systemEntry = $status.Entries | Where-Object { $_.Name -eq 'SecurityHealth' } | Select-Object -First 1
+        Assert-Equal 'Protected' $systemEntry.DisplayState
+        Assert-Equal 1 $status.Counts.Protected
+        Assert-Equal 1 $status.Counts.Blocked
+        Assert-Equal 2 $status.Counts.Total
+
+        Set-StartupGuardSwitch -State Off -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+    }
+
+    Invoke-Test 'an older record that blocked a system entry is released' {
+        Add-TestRunValue -SourceId 'MachineRun' -Name 'SecurityHealth' -Command '%windir%\system32\SecurityHealthSystray.exe'
+        Set-TestApproval -Name 'SecurityHealth' -Variant 'Run' -Bytes ([byte[]](3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+        $oldState = [ordered]@{
+            version   = 1
+            switch    = 'on'
+            updatedAt = (Get-Date).ToString('o')
+            excluded  = @()
+            disabled  = @(
+                [ordered]@{ name = 'SecurityHealth'; variant = 'Run'; sourceId = 'MachineRun'; previousKind = 'none'; previousBytes = $null }
+            )
+        }
+        $oldState | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:StatePath -Encoding UTF8
+
+        $status = Get-Status
+        Assert-Equal 'Protected' (($status.Entries | Where-Object { $_.Name -eq 'SecurityHealth' } | Select-Object -First 1).DisplayState)
+        Assert-True ((@($status.Warnings) -join ' ') -match 'still disabled') 'The old blocked system entry was not reported.'
+
+        $on = Set-StartupGuardSwitch -State On -SandboxRoot $script:Sandbox -StatePath $script:StatePath
+        Assert-True (@($on.ProtectedReleased) -contains 'SecurityHealth') 'The old system record was not released.'
+        Assert-True ($null -eq (Get-TestApproval -Name 'SecurityHealth' -Variant 'Run')) 'The system overlay was not removed.'
+        $state = Get-Content -LiteralPath $script:StatePath -Raw | ConvertFrom-Json
+        Assert-Equal 'on' $state.switch
+        Assert-Equal 0 @($state.disabled).Count
+
+        Set-StartupGuardSwitch -State Off -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+    }
+
     Invoke-Test 'installer copies runtime files and creates a desktop shortcut' {
         $root = Join-Path $env:TEMP ('sg-install-test-' + [guid]::NewGuid().ToString('N'))
         $installDir = Join-Path $root 'install'

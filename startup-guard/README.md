@@ -2,13 +2,14 @@
 
 一个开关，用来屏蔽开机时各软件自动发出的启动请求。
 
-开启开关后，当前 Windows 用户下次登录时，所有已启用的开机启动项都会被跳过；关闭开关后，工具会精确恢复开启前的状态。工具不删除任何注册表启动项或启动文件夹快捷方式，也不需要管理员权限。
+开启开关后，当前 Windows 用户下次登录时，所有已启用的第三方开机启动项都会被跳过（Windows 系统项默认保护）；关闭开关后，工具会精确恢复开启前的状态。工具不删除任何注册表启动项或启动文件夹快捷方式，也不需要管理员权限。
 
 ![开关关闭：启动项全部启用](docs/switch-off.png)
 
 ![开关开启：启动项全部屏蔽](docs/switch-on.png)
 
-> 截图使用带「演示模式」标记的测试数据，未展示或修改本机真实启动项。
+> 截图使用带「演示模式」标记的测试数据，未展示或修改本机真实启动项。其中 `SecurityHealth`
+> 是 Windows 系统项，保持「系统项」状态、不会被屏蔽。
 
 ## 安装到桌面（推荐）
 
@@ -37,7 +38,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 
 ## 开关行为
 
-**开启** 会遍历当前能看到的所有开机启动项，对其中处于启用状态的项写入当前用户的
+**开启** 会遍历当前能看到的所有开机启动项，对其中处于启用状态、且不属于系统项的项写入当前用户的
 `StartupApproved` 禁用标记（这正是任务管理器「禁用」按钮使用的机制），并把原始标记
 保存到状态文件：
 
@@ -65,10 +66,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 脚本、驱动。它们使用不同的机制，其中部分需要管理员权限；本工具刻意保持「每用户、
 可逆、免管理员」的定位。
 
+## 系统项保护
+
+以下启动项始终显示为「系统项」，开关开启时也不会被屏蔽：
+
+- 名称以 `SecurityHealth`、`Windows Security`、`Windows Defender` 开头的项（Windows 安全中心）。
+- 可执行文件位于 `%SystemRoot%`（通常是 `C:\Windows`）下的系统组件，例如
+  `%windir%\system32\SecurityHealthSystray.exe`。
+- `%ProgramFiles%\Windows Defender\` 下的组件。
+
+由 `wscript.exe` / `cscript.exe` / `cmd.exe` / `powershell.exe` 启动的用户脚本不算系统项，
+仍会按普通启动项处理；可以通过 `-Exclude` 排除。
+
+Realtek 音频面板、反作弊托盘等第三方程序不在系统保护范围内；如果希望保留，请把它们
+加入排除列表。当前机器上被保护的是 `SecurityHealth`（Windows 安全中心托盘），它只是
+托盘程序，不是 Windows 服务或驱动。
+
 ## 安全提醒
 
-开关默认屏蔽列表里的**所有**启用项，包括安全软件托盘、游戏反作弊托盘，以及像
-「大肥鱼开关」这类电源监控脚本。如果某个启动项必须保留，请先把它加入排除列表：
+开关默认屏蔽列表里的**所有**启用项（Windows 系统项除外），包括第三方安全软件托盘、
+游戏反作弊托盘，以及像「大肥鱼开关」这类电源监控脚本。Windows 安全中心托盘默认受保护。
+如果某个启动项必须保留，请先把它加入排除列表：
 
 ```powershell
 # 在 PowerShell 中进入本目录
@@ -99,6 +117,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 | `Enabled` | 当前会随登录启动 |
 | `Disabled` | 已被其他方式（任务管理器等）禁用，工具不会改动 |
 | `Excluded` | 命中排除列表，工具不会屏蔽 |
+| `Protected` | Windows 系统组件，工具默认不屏蔽 |
 | `Unknown` | `StartupApproved` 标记无法识别，工具跳过并给出警告 |
 
 ## 状态文件与恢复
@@ -142,8 +161,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\StartupGuard.Tests.ps1
 测试完全在沙箱中进行：注册表使用临时键
 `HKCU\Software\StartupGuardTests\<guid>`，启动文件夹使用临时目录，不会触碰真实的
 启动配置；测试结束前还会对比真实 `StartupApproved` 键的快照，确认它们没有被改动。
-共 16 个用例，覆盖列表、屏蔽、精确恢复、启动文件夹、漂移重应用、排除、试运行、
-空操作、未知标记、同名覆盖层、卸载后的残留标记、损坏状态文件和桌面安装。
+共 18 个用例，覆盖列表、屏蔽、精确恢复、启动文件夹、漂移重应用、排除、试运行、
+空操作、未知标记、同名覆盖层、卸载后的残留标记、系统项保护与旧记录释放、
+损坏状态文件和桌面安装。
 
 界面截图由 GUI 的测试参数生成（仅在指定 `-SandboxRoot` 时可用）：
 
