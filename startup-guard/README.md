@@ -10,7 +10,24 @@
 
 > 截图使用带「演示模式」标记的测试数据，未展示或修改本机真实启动项。
 
-## 快速开始
+## 安装到桌面（推荐）
+
+在本目录打开 PowerShell，执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+脚本会把程序复制到 `%LOCALAPPDATA%\StartupGuard\app`，生成程序图标，并在桌面创建
+「开机启动拦截」快捷方式。双击快捷方式即可打开开关窗口；安装完成后即使删除本仓库，
+程序仍可独立运行。
+
+- 重复执行 `install.ps1` 即可用当前文件更新安装；开关状态文件
+  `%LOCALAPPDATA%\StartupGuard\state.json` 不会被覆盖。
+- 只安装文件、不创建桌面快捷方式：加 `-NoShortcut`。
+- 卸载：先在窗口中关闭开关，再删除桌面快捷方式和 `%LOCALAPPDATA%\StartupGuard` 文件夹。
+
+## 在仓库中直接运行
 
 1. 双击 `StartupGuard.cmd` 打开窗口。
 2. 点击左上角的开关：蓝色为开启，灰色为关闭。
@@ -125,8 +142,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests\StartupGuard.Tests.ps1
 测试完全在沙箱中进行：注册表使用临时键
 `HKCU\Software\StartupGuardTests\<guid>`，启动文件夹使用临时目录，不会触碰真实的
 启动配置；测试结束前还会对比真实 `StartupApproved` 键的快照，确认它们没有被改动。
-共 15 个用例，覆盖列表、屏蔽、精确恢复、启动文件夹、漂移重应用、排除、试运行、
-空操作、未知标记、同名覆盖层、卸载后的残留标记和损坏状态文件。
+共 16 个用例，覆盖列表、屏蔽、精确恢复、启动文件夹、漂移重应用、排除、试运行、
+空操作、未知标记、同名覆盖层、卸载后的残留标记、损坏状态文件和桌面安装。
 
 界面截图由 GUI 的测试参数生成（仅在指定 `-SandboxRoot` 时可用）：
 
@@ -141,6 +158,7 @@ startup-guard/
 ├─ StartupGuard.cmd          # 双击启动图形界面
 ├─ StartupGuard.Gui.ps1      # 图形界面
 ├─ StartupGuard.psm1         # 核心逻辑（枚举、开关、状态文件）
+├─ install.ps1               # 安装到本机并创建桌面快捷方式
 ├─ startup-guard.cmd         # 命令行入口
 ├─ startup-guard.ps1         # 命令行实现
 ├─ docs/                     # 开关关闭 / 开启截图

@@ -378,6 +378,49 @@ try {
         }
     }
 
+    Invoke-Test 'installer copies runtime files and creates a desktop shortcut' {
+        $root = Join-Path $env:TEMP ('sg-install-test-' + [guid]::NewGuid().ToString('N'))
+        $installDir = Join-Path $root 'install'
+        $desktopDir = Join-Path $root 'desktop'
+        New-Item -ItemType Directory -Path $desktopDir -Force | Out-Null
+        try {
+            $result = & (Join-Path $ModuleRoot 'install.ps1') -SourceDir $ModuleRoot -InstallDir $installDir -DesktopDir $desktopDir -Quiet
+            Assert-True ($result.ShortcutCreated) 'The installer did not report a shortcut.'
+
+            foreach ($name in @('StartupGuard.Gui.ps1', 'StartupGuard.psm1', 'startup-guard.ps1', 'startup-guard.cmd', 'README.md')) {
+                $path = Join-Path $result.AppDir $name
+                Assert-True (Test-Path -LiteralPath $path) "The installer did not copy $name."
+            }
+            Assert-True (Test-Path -LiteralPath $result.IconPath) 'The installer did not create the icon.'
+            $icon = [System.Drawing.Icon]::new($result.IconPath)
+            try { Assert-Equal 64 $icon.Width } finally { $icon.Dispose() }
+
+            $shortcuts = @(Get-ChildItem -LiteralPath $desktopDir -Filter '*.lnk' -File)
+            Assert-Equal 1 $shortcuts.Count 'Expected exactly one desktop shortcut.'
+            $shortcutPath = $shortcuts[0].FullName
+            $shell = New-Object -ComObject WScript.Shell
+            try {
+                $shortcut = $shell.CreateShortcut($shortcutPath)
+                Assert-True ($shortcut.TargetPath -like '*powershell.exe') "Unexpected shortcut target: $($shortcut.TargetPath)"
+                Assert-True ($shortcut.Arguments -like '*StartupGuard.Gui.ps1*') 'The shortcut does not launch the GUI.'
+                Assert-True ($shortcut.IconLocation -like '*StartupGuard.ico*') 'The shortcut has no custom icon.'
+                Assert-True ((Test-Path -LiteralPath (Join-Path $result.InstallDir 'state.json')) -eq $false) 'The installer created a state file.'
+            }
+            finally {
+                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+            }
+
+            $stateFile = Join-Path $result.InstallDir 'state.json'
+            Set-Content -LiteralPath $stateFile -Value '{"version":1,"switch":"off"}' -Encoding UTF8
+            $null = & (Join-Path $ModuleRoot 'install.ps1') -SourceDir $ModuleRoot -InstallDir $installDir -DesktopDir $desktopDir -Quiet
+            $preserved = (Get-Content -LiteralPath $stateFile -Raw).Trim()
+            Assert-Equal '{"version":1,"switch":"off"}' $preserved 'Reinstall must not overwrite the switch state file.'
+        }
+        finally {
+            if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     Invoke-Test 'a corrupt state file produces a clear error' {
         Set-Content -LiteralPath $script:StatePath -Value 'this is not json'
         $threw = $false
