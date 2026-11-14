@@ -18,7 +18,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$SourceDir = $PSScriptRoot,
+    [string]$SourceDir = '',
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'StartupGuard'),
     [string]$DesktopDir = [Environment]::GetFolderPath('Desktop'),
     [switch]$NoShortcut,
@@ -26,6 +26,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($SourceDir)) { $SourceDir = $PSScriptRoot }
+if ([string]::IsNullOrWhiteSpace($SourceDir)) { throw '无法确定安装源目录，请用 -SourceDir 指定 startup-guard 文件夹。' }
 
 function New-StartupGuardIcon {
     param([string]$Path)
