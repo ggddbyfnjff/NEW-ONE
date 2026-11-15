@@ -1,0 +1,14 @@
+{
+  "name": "new-one-local-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "本地聊天小工具：通过 GitHub Issue 收发消息",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}

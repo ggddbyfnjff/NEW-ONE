@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>本地聊天 · GitHub</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">聊</div>
+        <div class="brand-copy">
+          <h1>本地聊天</h1>
+          <p class="subtitle" id="subtitle">正在连接 GitHub…</p>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <span class="status" id="status" data-state="connecting">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="statusText">连接中</span>
+        </span>
+        <a class="issue-link" id="issueLink" href="#" target="_blank" rel="noopener noreferrer" hidden>查看 Issue ↗</a>
+      </div>
+    </header>
+
+    <div class="notice" id="notice" role="alert" hidden></div>
+
+    <section class="messages" id="messages" role="log" aria-live="polite" aria-label="聊天记录">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-illustration" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <p class="empty-title">还没有消息</p>
+        <p class="empty-hint">在下面输入内容，它会以评论形式发到固定对话 Issue，对方的回复会自动出现在这里。</p>
+      </div>
+    </section>
+
+    <form class="composer" id="composer">
+      <label class="sr-only" for="input">消息内容</label>
+      <textarea id="input" name="text" rows="1" maxlength="8000"
+        placeholder="输入消息，Enter 发送，Shift+Enter 换行" autocomplete="off"></textarea>
+      <div class="composer-bar">
+        <span class="identity-hint">以 <strong id="meName">当前账号</strong> 的身份发送</span>
+        <span class="counter" id="counter">0 / 8000</span>
+        <button class="send-button" id="send" type="submit" disabled>发送</button>
+      </div>
+    </form>
+  </main>
+
+  <template id="messageTemplate">
+    <article class="message">
+      <div class="bubble">
+        <div class="message-meta">
+          <span class="role"></span>
+          <span class="author"></span>
+          <time></time>
+        </div>
+        <div class="message-text"></div>
+      </div>
+    </article>
+  </template>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
