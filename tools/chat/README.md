@@ -22,6 +22,7 @@
    - Permissions 中把 **Issues** 设为 **Read and write**
    - **Metadata** 保持 **Read-only**（GitHub 要求）
    - 令牌必须属于账号 `sfdutfsaqutfd`，消息会以该账号身份发出
+   - 如果 Fine-grained token 页面无法选择这个公开仓库，可以改用 classic token，并勾选 `public_repo` 权限
 3. 把令牌保存到本目录的 `token.txt`：
    - 文件里只放一行令牌，不要加引号
    - 也可以改用环境变量 `GITHUB_TOKEN`（见下面的配置表）；环境变量优先
