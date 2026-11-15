@@ -512,6 +512,25 @@ try {
         }
     }
 
+    Invoke-Test 'legacy null exclusions are ignored and cleaned on save' {
+        $legacy = [ordered]@{
+            version   = 1
+            switch    = 'off'
+            updatedAt = (Get-Date).ToString('o')
+            excluded  = @($null)
+            disabled  = @()
+        }
+        $legacy | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $script:StatePath -Encoding UTF8
+
+        $status = Get-Status
+        Assert-Equal 0 @($status.Excluded).Count
+        Assert-Equal 0 $status.Counts.Excluded
+
+        Set-StartupGuardExclusions -Exclude @() -SandboxRoot $script:Sandbox -StatePath $script:StatePath | Out-Null
+        $raw = Get-Content -LiteralPath $script:StatePath -Raw
+        Assert-False ($raw -match '"excluded":\s*\[\s*null') 'The saved state still contains a null exclusion.'
+    }
+
     Invoke-Test 'a corrupt state file produces a clear error' {
         Set-Content -LiteralPath $script:StatePath -Value 'this is not json'
         $threw = $false

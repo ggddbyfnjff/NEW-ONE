@@ -429,7 +429,7 @@ function Save-StartupGuardState {
         version   = $script:GuardVersion
         switch    = if ($State.Switch -eq 'On') { 'on' } else { 'off' }
         updatedAt = $State.UpdatedAt
-        excluded  = @($State.Excluded)
+        excluded  = @($State.Excluded | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
         disabled  = @(
             foreach ($record in @($State.Disabled)) {
                 [ordered]@{
